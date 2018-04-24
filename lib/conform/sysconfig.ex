@@ -9,7 +9,7 @@ defmodule Conform.SysConfig do
   Returns the config as Elixir terms.
   """
   @spec read(binary) :: [term]
-  def read(path), do: path |> String.to_char_list |> :file.consult
+  def read(path), do: path |> String.to_charlist |> :file.consult
 
   @doc """
   Write a config (in the form of Elixir terms) to disk in
@@ -17,26 +17,29 @@ defmodule Conform.SysConfig do
   """
   @spec write(binary, term) :: :ok | {:error, term}
   def write(path, config) do
-    case File.write!(path, :io_lib.fwrite('~p.\n', [config])) do
+    bin = :io_lib.fwrite('~tp.~n', [config])
+    case :file.write_file(String.to_charlist(path), bin, [encoding: :utf8]) do
       :ok -> :ok
       {:error, reason} -> {:error, :file.format_error(reason)}
     end
   end
 
   @doc """
-  Print a config to the console with pretty formatting
-  """
-  def pprint(config) do
-    config
-    |> prettify
-    |> IO.puts
-  end
-
-  @doc """
   Print a config to the console without applying any formatting
   """
   def print(config) do
-    IO.inspect(config)
+    config = Conform.Utils.sort_kwlist(config)
+    if IO.ANSI.enabled? do
+      colors = [
+        number: :yellow,
+        atom: :cyan,
+        regex: :yellow,
+        string: :green
+      ]
+      IO.inspect(config, width: 0, limit: :infinity, pretty: true, syntax_colors: colors)
+    else
+      IO.inspect(config, width: 0, limit: :infinity, pretty: true)
+    end
   end
 
   @doc """
@@ -52,8 +55,8 @@ defmodule Conform.SysConfig do
   """
   def prettify(config) do
     config
+    |> Conform.Utils.sort_kwlist
     |> Inspect.Algebra.to_doc(%Inspect.Opts{pretty: true, limit: 1000})
     |> Inspect.Algebra.format(80)
   end
-
 end

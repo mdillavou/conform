@@ -13,8 +13,46 @@ defmodule Conform.ReleasePlugin do
   for sysadmins and other deployment staff for easily configuring
   your release in production.
   """
+
+  # Used to check compatibility with certain features or changes
+  defmacrop if_distillery(op, version, do: block, else: else_block)
+    when op in [:lt, :gt, :eq] and is_binary(version) do
+      quote location: :keep do
+        distillery_vsn =
+          :distillery
+          |> Application.spec
+          |> Keyword.get(:vsn)
+          |> to_string
+
+        case Version.parse(distillery_vsn) do
+          :error ->
+            case String.split(distillery_vsn, ".") do
+              [major, minor | _] ->
+                if Version.compare(Version.parse!("#{major}.#{minor}.0"), Version.parse!(unquote(version))) == unquote(op) do
+                  unquote(block)
+                else
+                  unquote(else_block)
+                end
+              _ ->
+                unquote(block)
+            end
+          {:ok, vsn} ->
+            if Version.compare(vsn, unquote(version)) == unquote(op) do
+              unquote(block)
+            else
+              unquote(else_block)
+            end
+        end
+      end
+  end
+
   def before_assembly(%{profile: %{overlays: overlays} = profile} = release) do
-    pre_configure_src = Path.join(["#{:code.priv_dir(:conform)}", "bin", "pre_configure.sh"])
+    include_pre_start? =
+      if_distillery :lt, "1.2.0", do: true, else: false
+    pre_or_post_configure =
+      if_distillery :lt, "1.5.0", do: "pre_configure", else: "post_configure"
+
+    post_configure_src = Path.join(["#{:code.priv_dir(:conform)}", "bin", "#{pre_or_post_configure}.sh"])
     pre_upgrade_src = Path.join(["#{:code.priv_dir(:conform)}", "bin", "pre_upgrade.sh"])
     post_upgrade_src = Path.join(["#{:code.priv_dir(:conform)}", "bin", "post_upgrade.sh"])
     debug "loading schema"
@@ -23,12 +61,19 @@ defmodule Conform.ReleasePlugin do
     schema_src = get_schema_path(release)
 
     # Define overlays
-    conform_overlays = [
-      {:copy, pre_configure_src, "releases/<%= release_version %>/hooks/pre_start.d/00_conform_pre_configure.sh"},
-      {:copy, pre_configure_src, "releases/<%= release_version %>/hooks/pre_configure.d/00_conform_pre_configure.sh"},
-      {:copy, pre_upgrade_src, "releases/<%= release_version %>/hooks/pre_upgrade.d/00_conform_pre_upgrade.sh"},
-      {:copy, post_upgrade_src, "releases/<%= release_version %>/hooks/post_upgrade.d/00_conform_post_upgrade.sh"},
-      {:copy, schema_src, "releases/<%= release_version %>/<%= release_name %>.schema.exs"}]
+    conform_overlays =
+      if include_pre_start? do
+        [{:copy, post_configure_src, "releases/<%= release_version %>/hooks/pre_start.d/00_conform_pre_configure.sh"},
+         {:copy, post_configure_src, "releases/<%= release_version %>/hooks/#{pre_or_post_configure}.d/00_conform_#{pre_or_post_configure}.sh"},
+         {:copy, pre_upgrade_src, "releases/<%= release_version %>/hooks/pre_upgrade.d/00_conform_pre_upgrade.sh"},
+         {:copy, post_upgrade_src, "releases/<%= release_version %>/hooks/post_upgrade.d/00_conform_post_upgrade.sh"},
+         {:copy, schema_src, "releases/<%= release_version %>/<%= release_name %>.schema.exs"}]
+      else
+        [{:copy, post_configure_src, "releases/<%= release_version %>/hooks/#{pre_or_post_configure}.d/00_conform_#{pre_or_post_configure}.sh"},
+         {:copy, pre_upgrade_src, "releases/<%= release_version %>/hooks/pre_upgrade.d/00_conform_pre_upgrade.sh"},
+         {:copy, post_upgrade_src, "releases/<%= release_version %>/hooks/post_upgrade.d/00_conform_post_upgrade.sh"},
+         {:copy, schema_src, "releases/<%= release_version %>/<%= release_name %>.schema.exs"}]
+      end
 
     if File.exists?(schema_src) do
       conform_overlays =

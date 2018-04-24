@@ -4,15 +4,13 @@ defmodule Mix.Tasks.Conform.Configure do
   """
   @shortdoc "Create a .conf file from schema and project config"
 
-  use    Mix.Task
-  import Conform.Utils
+  use Mix.Task
 
   def run(args) do
     Mix.Tasks.Loadpaths.run([])
     if Mix.Project.umbrella? do
-      config = [build_path: Mix.Project.build_path]
       for %Mix.Dep{app: app, opts: opts} <- Mix.Dep.Umbrella.loaded do
-        Mix.Project.in_project(app, opts[:path], config, &do_run/1)
+        Mix.Project.in_project(app, opts[:path], opts, &do_run/1)
       end
     else
       do_run(args)
@@ -25,16 +23,16 @@ defmodule Mix.Tasks.Conform.Configure do
     output_path = Path.join([File.cwd!, "config", "#{app}.#{Mix.env}.conf"])
 
     # Check for conditions which prevent us from continuing
-    continue? = case File.exists?(schema_path) do
-      true  -> true
-      false ->
-        error "You must create a schema before you can generate a .conf!"
-        false
-    end
-    continue? = continue? and case File.exists?(output_path) do
-      true  -> confirm_overwrite?(output_path)
-      false -> true
-    end
+    continue? =
+      if File.exists?(schema_path) do
+        if File.exists?(output_path) do
+          confirm_overwrite?(output_path)
+        else
+          true
+        end
+      else
+        Conform.Logger.error "You must create a schema before you can generate a .conf!"
+      end
 
     if continue? do
       # Convert configuration to schema format
@@ -43,7 +41,7 @@ defmodule Mix.Tasks.Conform.Configure do
       conf = Conform.Translate.to_conf(schema)
       # Output configuration to `output_path`
       File.write!(output_path, conf)
-      info "The .conf file for #{app} has been placed in #{Path.relative_to_cwd(output_path)}"
+      Conform.Logger.success "The .conf file for #{app} has been placed in #{Path.relative_to_cwd(output_path)}"
     end
   end
 

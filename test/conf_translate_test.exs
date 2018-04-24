@@ -43,7 +43,7 @@ defmodule ConfTranslateTest do
     myapp.another_val = active
 
     # Atom module name
-    myapp.Elixir.Some.Module.val = foo
+    myapp.Some.Module.val = foo
 
     # Provide documentation for myapp.Custom.Enum here.
     # Allowed values: dev, prod, test
@@ -58,36 +58,59 @@ defmodule ConfTranslateTest do
   end
 
   test "can generate config as Elixir terms from .conf and schema with imports" do
-    {:ok, cwd} = File.cwd
-    script = cwd <> "/conform"
-    example_app_path = "#{cwd}/"  <> Path.join(["test", "fixtures", "example_app"])
-    sys_config_path = "#{cwd}/"  <> Path.join(["test", "fixtures", "example_app", "config"])
-    conf_path = "#{cwd}/"  <> Path.join(["test", "fixtures", "example_app", "config", "test.conf"])
-    schema_path = "#{cwd}/"  <> Path.join(["test", "fixtures", "example_app", "config", "test.schema.exs"])
+    cwd = File.cwd!
+    script = Path.join([cwd, "priv", "bin", "conform"])
+    example_app_path = Path.join([cwd, "test", "fixtures", "example_app"])
+    sys_config_dir = Path.join([cwd, "test", "fixtures", "example_app", "config"])
+    sys_config_path = Path.join(sys_config_dir, "sys.config")
+    conf_path = Path.join([cwd, "test", "fixtures", "example_app", "config", "test.conf"])
+    schema_path = Path.join([cwd, "test", "fixtures", "example_app", "config", "test.schema.exs"])
 
-    File.touch(sys_config_path <> "/sys.config")
+    File.touch(sys_config_path)
     capture_io(fn ->
-      {:ok, zip_path, _build_files} = Mix.Project.in_project(:example_app, example_app_path,
-        fn _ ->
-          Mix.Task.run("deps.get")
-          Mix.Task.run("deps.compile")
-          Mix.Task.run("compile")
-          Mix.Task.run("conform.archive", [schema_path])
-        end)
+      {:ok, zip_path, _build_files} =
+        Mix.Project.in_project(:example_app, example_app_path,
+          fn _ ->
+            Mix.Task.run("deps.get")
+            Mix.Task.run("deps.compile")
+            Mix.Task.run("compile")
+            Mix.Task.run("conform.archive", [schema_path])
+          end)
 
       expected = [
         fake_app: [greeting: "hi!"],
         test: [another_val: 3, debug_level: :info, env: :prod]
       ]
 
-      _ = Mix.Task.run("escript.build", [path: script])
-      _ = :os.cmd("#{script} --schema #{schema_path} --conf #{conf_path} --output-dir #{sys_config_path}" |> to_char_list)
-      {:ok, [sysconfig]} = :file.consult(sys_config_path <> "/sys.config")
-      assert Path.basename(zip_path) == "test.schema.ez"
-      assert sysconfig == expected
-      File.rm(sys_config_path <> "/sys.config")
-      File.rm(script)
+      _ = Mix.Task.run("escript.build", ["--force"])
+      {_output, 0} = System.cmd(script, ["--schema", schema_path, "--conf", conf_path, "--output-dir", sys_config_dir])
+      {:ok, [sysconfig]} = :file.consult(sys_config_path)
+      assert "test.schema.ez" = Path.basename(zip_path)
+      assert ^expected = Conform.Utils.sort_kwlist(sysconfig)
+      File.rm(sys_config_path)
     end)
+  end
+
+  test "can handle utf8 values when translating" do
+    cwd = File.cwd!
+    script = Path.join([cwd, "priv", "bin", "conform"])
+    sys_config = Mix.Config.read!(Path.join([cwd, "test", "configs", "utf8.exs"]))
+    utf8_dir = Path.join([cwd, "test", "fixtures", "utf8"])
+    File.mkdir_p!(utf8_dir)
+    sys_config_path = Path.join([utf8_dir, "utf8_sys.config"])
+    :ok = Conform.SysConfig.write(sys_config_path, sys_config)
+    conf_path = Path.join([cwd, "test", "confs", "utf8.conf"])
+    schema_path = Path.join([cwd, "test", "schemas", "utf8.schema.exs"])
+
+    #capture_io(fn ->
+      expected = [my_app: [utf8: "Fixé"]]
+
+      _ = Mix.Task.run("escript.build", ["--force"])
+      {_output, 0} = System.cmd(script, ["--schema", schema_path, "--conf", conf_path, "--output-dir", utf8_dir])
+      {:ok, [sysconfig]} = :file.consult(Path.join([utf8_dir, "sys.config"]))
+      assert ^expected = sysconfig
+      File.rm_rf!(utf8_dir)
+    #end)
   end
 
   test "can generate config as Elixir terms from .conf and schema" do
@@ -103,7 +126,7 @@ defmodule ConfTranslateTest do
       ],
       logger: [format: "$time $metadata[$level] $levelpad$message\n"],
       myapp: [
-        {:'Custom.Enum', :dev},
+        {Custom.Enum, :dev},
         {Some.Module, [val: :foo]},
         another_val: {:on, [data: %{log: :warn}]},
         db: [hosts: [{"127.0.0.1", "8001"}]],
@@ -114,7 +137,7 @@ defmodule ConfTranslateTest do
       some: ["string value": nil],
       "starting string": [key: 'empty']
     ]
-    assert config == expect
+    assert Conform.Utils.sort_kwlist(config) == expect
   end
 
   test "can generate config as Elixir terms from existing config, .conf and schema" do
@@ -143,7 +166,7 @@ defmodule ConfTranslateTest do
       ],
       logger: [format: "$time $metadata[$level] $levelpad$message\n"],
       myapp: [
-        {:'Custom.Enum', :dev},
+        {Custom.Enum, :dev},
         {Some.Module, [val: :foo]},
         another_val: {:on, [data: %{log: :warn}]},
         db: [hosts: [{"127.0.0.1", "8001"}]],
@@ -154,7 +177,7 @@ defmodule ConfTranslateTest do
       some: ["string value": nil],
       "starting string": [key: 'empty']
     ]
-    assert config == expect
+    assert Conform.Utils.sort_kwlist(config) == expect
   end
 
   test "can write config to disk as Erlang terms in valid app/sys.config format" do
@@ -173,7 +196,7 @@ defmodule ConfTranslateTest do
 
   test "can translate with nested lists to conf" do
     path   = Path.join(["test", "configs", "nested_list.exs"])
-    config = path |> Mix.Config.read! |> Macro.escape
+    config = path |> Mix.Config.read!
     schema = Conform.Schema.from_config(config)
     conf   = Conform.Translate.to_conf(schema)
     expected = """

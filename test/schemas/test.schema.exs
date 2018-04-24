@@ -1,6 +1,6 @@
 [
-  extends: [:foo],
-  import: [:foo],
+  extends: [],
+  import: [],
   mappings: [
     "log.error.file": [
       to:       "log.error_file",
@@ -71,7 +71,7 @@
       * active-debug: it's going to be active, with verbose debugging information
       """
     ],
-    "myapp.Elixir.Some.Module.val": [
+    "myapp.Some.Module.val": [
       datatype: :atom,
       default:  :foo,
       doc:      "Atom module name"

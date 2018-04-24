@@ -34,7 +34,8 @@ defmodule Conform.Conf do
     end
   end
 
-  defp from(conf) do
+  @doc false
+  def from(conf) do
     table = :ets.new(:conform_query, [:set, keypos: 1])
     for {key, value} <- conf do
       # In order to make sure that module names in key paths are not split,
@@ -65,7 +66,7 @@ defmodule Conform.Conf do
       [{['lager', 'handlers', 'console', 'level'], :info},
        {['lager', 'handlers', 'file', 'error'], '/var/log/error.log'}]
   """
-  @spec get(non_neg_integer() | atom(), String.t | [char_list]) :: [{[atom], term}] | {:error, term}
+  @spec get(non_neg_integer() | atom(), String.t | [charlist]) :: [{[atom], term}] | {:error, term}
   def get(table, key) when is_binary(key), do: get(table, get_key_path(key))
   def get(table, query) when is_list(query) do
     # Execute query
@@ -175,7 +176,7 @@ defmodule Conform.Conf do
       [{['lager', 'handlers', 'console', 'level'], :info},
        {['lager', 'handlers', 'file', 'error'], '/var/log/error.log'}]
   """
-  @spec find(non_neg_integer() | atom(), String.t | [char_list]) :: [{[atom], term}]
+  @spec find(non_neg_integer() | atom(), String.t | [charlist]) :: [{[atom], term}]
   def find(table, key) when is_binary(key), do: get_matches(table, get_key_path(key))
   def find(table, key) when is_list(key),   do: get_matches(table, key)
 
@@ -183,7 +184,7 @@ defmodule Conform.Conf do
   Removes any key/value pairs from the conf table which match the provided key or
   are a child of the provided key.
   """
-  @spec remove(non_neg_integer() | atom(), String.t | [char_list]) :: :ok
+  @spec remove(non_neg_integer() | atom(), String.t | [charlist]) :: :ok
   def remove(table, key) when is_binary(key), do: remove(table, get_key_path(key))
   def remove(table, key) when is_list(key) do
     case get_matches(table, key) do
@@ -193,10 +194,12 @@ defmodule Conform.Conf do
   end
 
   @doc """
-  Given a string or atom of the form `some.path.to.a.setting`,
-  it breaks it into a list of it's component parts, ensuring that
-  embedded module names are preserved, i.e.
-      "myapp.Some.Module.setting" => ['myapp', 'Some.Module', 'setting']
+  Given a string or atom of the form `some.path.to.a.setting`, it breaks it into a list of it's component parts,
+  ensuring that embedded module names are preserved, and that the `Elixir` prefix is added if missing and applicable:
+
+  ## Example
+
+      "myapp.Some.Module.setting" => ['myapp', 'Elixir.Some.Module', 'setting']
   """
   def get_key_path(key)
 
@@ -206,16 +209,30 @@ defmodule Conform.Conf do
     |> get_key_path
   end
   def get_key_path(key) when is_binary(key) do
-    key
-    |> String.split(".", trim: true)
-    |> join_module_parts
-    |> Enum.map(&String.to_char_list/1)
+    joined =
+      case String.split(key, ".", trim: true) do
+        [_app, "Elixir" | _] = parts ->
+          # This is an elixir module with the Elixir prefix
+          join_module_parts(parts)
+        [app, <<first_char::utf8, _::binary>> = mod | rest] when first_char in ?A..?Z ->
+          # This is an elixir module without the Elixir prefix
+          join_module_parts([app, "Elixir", mod | rest])
+        parts ->
+          join_module_parts(parts)
+      end
+    Enum.map(joined, &String.to_charlist/1)
   end
   def get_key_path(key) when is_list(key) do
-    key
-    |> Enum.map(&List.to_string/1)
-    |> join_module_parts
-    |> Enum.map(&String.to_char_list/1)
+    joined =
+      case Enum.map(key, &List.to_string/1) do
+        [_app, "Elixir" | _] = parts ->
+          join_module_parts(parts)
+        [app, <<first_char::utf8, _::binary>> = mod | rest] when first_char in ?A..?Z ->
+          join_module_parts([app, "Elixir", mod | rest])
+        parts ->
+          join_module_parts(parts)
+      end
+    Enum.map(joined, &String.to_charlist/1)
   end
 
   # Handles joining module name parts contained in an list of key parts

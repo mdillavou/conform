@@ -6,7 +6,7 @@ defmodule Conform.Translate do
   alias Conform.Schema
   alias Conform.Schema.Mapping
   alias Conform.Schema.Transform
-  import Conform.Utils, only: [merge: 2, sort_kwlist: 1]
+  import Conform.Utils, only: [merge: 2]
 
   @type table_identifier :: non_neg_integer() | atom()
 
@@ -28,8 +28,9 @@ defmodule Conform.Translate do
     Enum.reduce mappings, "", fn %Mapping{name: key} = mapping, result ->
       # If the datatype of this mapping is an enum,
       # write out the allowed values
-      datatype             = mapping.datatype || :binary
-      doc                  = mapping.doc || ""
+      datatype = mapping.datatype || :binary
+      doc = mapping.doc || ""
+      commented? = mapping.commented == true
       {custom?, mod, args} = is_custom_type?(datatype)
       comments = cond do
         custom? ->
@@ -58,6 +59,8 @@ defmodule Conform.Translate do
       case mapping.default do
         nil ->
           <<result::binary, "# #{key} = \n\n">>
+        default when commented? ->
+          <<result::binary, "# #{key} = #{write_datatype(datatype, default, key)}\n\n">>
         default ->
           <<result::binary, "#{key} = #{write_datatype(datatype, default, key)}\n\n">>
       end
@@ -80,11 +83,10 @@ defmodule Conform.Translate do
   Translate the provided .conf to it's .config representation using the provided schema.
   """
   @spec to_config(%Conform.Schema{}, [{term, term}] | [], table_identifier) :: term
-  def to_config(%Schema{} = schema, config, conf_table_id) when is_integer(conf_table_id) do
+  def to_config(%Schema{} = schema, config, conf_table_id) do
     conf = apply_schema(conf_table_id, schema)
     config
     |> merge(conf)   # Merge the conf over config.exs/sys.config terms
-    |> sort_kwlist   # Sort the settings for easy navigation
   end
 
   defp apply_schema(conf_table_id, %Schema{} = schema) do
@@ -116,8 +118,7 @@ defmodule Conform.Translate do
       :ets.tab2list(conf_table_id) |> Conform.Utils.results_to_tree
     catch
       err ->
-        Conform.Utils.error("Error thrown when constructing configuration: #{Macro.to_string(err)}")
-        exit(1)
+        Conform.Logger.error("Error thrown when constructing configuration: #{Macro.to_string(err)}")
     end
   end
 
@@ -142,7 +143,7 @@ defmodule Conform.Translate do
         for {conf_key, value} <- results, not datatype in [:complex, [list: :complex]] do
           parsed = case value do
             nil -> default
-            _   -> parse_datatype(datatype, value, mapping)
+            _   -> parse_datatype(datatype, List.wrap(value), mapping)
           end
           :ets.insert(table, {conf_key, parsed})
         end
@@ -173,7 +174,11 @@ defmodule Conform.Translate do
           nil -> mapping.default
           var ->
             case System.get_env(var) do
-              nil -> mapping.default
+              nil ->
+                case mapping.default do
+                  nil -> raise missing_env_var(var, key)
+                  default -> default
+                end
               val -> parse_datatype(datatype, [val], mapping)
             end
         end
@@ -243,7 +248,11 @@ defmodule Conform.Translate do
           {stripped, default}
         var ->
           case System.get_env(var) do
-            nil -> {stripped, default}
+            nil ->
+              case default do
+                nil -> raise missing_env_var(var, key)
+                default -> {stripped, default}
+              end
             val -> {stripped, parse_datatype(mapping.datatype, [val], mapping)}
           end
       end
@@ -284,8 +293,7 @@ defmodule Conform.Translate do
         t.(table)
       _ ->
         problem_key = Enum.map(key, &List.to_string/1) |> Enum.join(".")
-        Conform.Utils.error("Invalid transform for #{problem_key}. Must be a function of arity 1")
-        exit(1)
+        Conform.Logger.error("Invalid transform for #{problem_key}. Must be a function of arity 1")
     end
     :ets.insert(table, {key, transformed})
     apply_transforms(rest, table)
@@ -469,11 +477,16 @@ defmodule Conform.Translate do
     converted = write_datatype(type, v, setting)
     <<Atom.to_string(k)::binary, " = ", converted::binary>>
   end
-  defp write_datatype(_datatype, value, _setting) do
+  defp write_datatype(datatype, value, setting) do
     case "#{value}" do
       "" -> <<?", "#{value}", ?">>
       _ -> "#{value}"
     end
+  rescue
+    Protocol.UndefinedError ->
+      msg = "Unable to stringify #{setting}, unrecognized type #{inspect datatype}"
+      IO.puts(IO.ANSI.yellow <> msg <> IO.ANSI.reset)
+      ""
   end
 
   defp to_comment(str) do
@@ -487,7 +500,7 @@ defmodule Conform.Translate do
       _                               -> {false, nil}
     end
     if mod do
-      [first|_] = Atom.to_char_list(mod)
+      [first|_] = Atom.to_charlist(mod)
       mod = case String.match?(<<first::utf8>>, ~r/[A-Z]/) do
         true  -> Module.concat([mod])
         false -> mod
@@ -524,4 +537,7 @@ defmodule Conform.Translate do
     |> Enum.join(".")
   end
 
+  defp missing_env_var(var, key) do
+    "Configuration Error: environment variable $#{var} is not set and no default value for #{key} is present."
+  end
 end

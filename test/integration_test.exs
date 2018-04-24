@@ -17,7 +17,7 @@ defmodule IntegrationTest do
                   debug_level: :info,
                   env: :test,
                   servers: [proxy: [{ {:eradius_proxy, 'proxy', proxy}, [{'127.0.0.1', "secret"}] }]]]]
-    assert effective == expected
+    assert Conform.Utils.sort_kwlist(effective) == expected
     assert Keyword.equal?(expected, effective)
   end
 
@@ -50,7 +50,7 @@ defmodule IntegrationTest do
                   some: [important: [setting: [
                     {"127.0.0.1", "80"}, {"127.0.0.2", "81"}
                   ]]]]]
-    assert effective == expected
+    assert Conform.Utils.sort_kwlist(effective) == expected
   end
 
   test "for the complex data types" do
@@ -66,7 +66,7 @@ defmodule IntegrationTest do
                  some_val: :foo, some_val2: 2.5,
                  sublist: ["opt-2": "val2", opt1: "val1"]]]
 
-    assert effective == expected
+    assert Conform.Utils.sort_kwlist(effective) == expected
   end
 
   test "test for the custom data type" do
@@ -79,7 +79,7 @@ defmodule IntegrationTest do
                   syslog: :on], logger:
                  [format: "$time $metadata[$level] $levelpad$message\n"],
                  myapp: [
-                   {:'Custom.Enum', :prod},
+                   {Custom.Enum, :prod},
                    {Some.Module, [val: :foo]},
                    {:another_val, {:on, [data: %{log: :warn}]}},
                    {:db, [hosts: [{"127.0.0.1", "8001"}]]}, {:some_val, :bar}, {:volume, 1}],
@@ -87,12 +87,12 @@ defmodule IntegrationTest do
                  some: ["string value": 'stringkeys'],
                  "starting string": [key: 'stringkeys']]
 
-    assert effective == expected
+    assert Conform.Utils.sort_kwlist(effective) == expected
   end
 
   test "can generate default schema from config" do
     config_path = Path.join(["test", "configs", "nested_list.exs"])
-    config = Mix.Config.read!(config_path) |> Macro.escape
+    config = Mix.Config.read!(config_path)
     schema = Conform.Schema.from_config(config)
     result = Conform.Schema.stringify(schema, false)
     assert """
